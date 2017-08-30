@@ -245,6 +245,10 @@ class ShallowModel(object):
       input_data: np.ndarray of shape (n_samples, n_features)
       input_labels: np.ndarray of shape (n_samples, n_classes)
     """
+    gva = tf.gradients(self.loss, self.activations)
+    gvm = tf.gradients(self.loss, self.mod_effects)
+    gvp = tf.gradients(self.loss, self.pool_weights)
+    gvw = tf.gradients(self.loss, self.W)
 
     batches = self.batches(input_data, output_data,self.config.batch_size)
     for (x, y) in batches:
@@ -284,25 +288,6 @@ class ShallowModel(object):
       tmp[prune] = 0
       return self.prune_col(tmp)
 
-  def model_metrics(self, sess):
-    train_fd = self.create_feed_dict(self.x_train, self.y_train)
-    test_fd = self.create_feed_dict(self.x_test, self.y_test)
-    gva = tf.gradients(self.loss, self.activations)
-    gvm = tf.gradients(self.loss, self.mod_effects)
-    gvp = tf.gradients(self.loss, self.pool_weights)
-    gvw = tf.gradients(self.loss, self.W)
-    train_loss, train_fit= sess.run(
-             [self.loss, self.pred_fit], feed_dict=train_fd)
-    poly_fit, logistic_fit, mod_fit = self.model_fit(sess)
-    model_fit = sess.run(met.prediction_fit(self.W, self.conv_true))
-    test_loss, test_fit = sess.run(
-             [self.loss, self.pred_fit], feed_dict=test_fd)
-    print 'Loss %f'  %(train_loss)
-    print 'Prediction fit %f'  %(train_fit)
-    print 'Model fit %f, %f, %f'  %(poly_fit, logistic_fit, mod_fit)
-    print sess.run(met.prediction_fit(self.W, self.conv_true))
-    return [train_loss, train_fit, test_loss, test_fit, model_fit]
-
   def fit(self, sess):
     """Fit model on provided data.
     """
@@ -313,7 +298,7 @@ class ShallowModel(object):
     for i in range(self.config.max_epochs):
       if (i % 100 ==0):
         print 'Step %d:' %(i)
-        metrics  = self.model_metrics(sess)
+        metrics  = met.model_metrics(sess)
         data.append([i] + metrics)
 
       self.run_epoch(sess, self.x_train, self.y_train)
@@ -321,34 +306,9 @@ class ShallowModel(object):
     pruned= self.prune_weights(sess, self.W)
     print sess.run(pruned)
     print self.conv_true
-    metrics = self.model_metrics(sess)
+    metrics = met.model_metrics(sess)
     data.append([self.config.max_epochs] + metrics)
     return data
-
-  def subset_metrics(self, pruned, true):
-
-    true_nonzero = true!=0
-    true_zero = np.logical_not(true_nonzero)
-    prune_nonzero = pruned!=0
-    prune_zero = np.logical_not(prune_nonzero)
-    true_pos = np.logical_and(true_nonzero, prune_nonzero)
-    true_neg = np.logical_and(true_zero, prune_zero)
-    false_pos = np.logical_and(true_zero , prune_nonzero)
-    false_neg = np.logical_and(true_nonzero , prune_zero)
-    count_list = [true_pos, true_neg, false_pos, false_neg]
-    counts =[np.add.reduce(x, axis = None, dtype='float') for x in count_list]
-
-    return counts/sum(counts)
-
-  def redundancy_metrics( pruned, true):
-    ref_vecs = np.apply_along_axis(lambda col: find_ref(col, true), 0, pruned)
-    d = pruned.shape[1]
-    mets  = np.array([subset_metrics(pruned[:,i], ref_vecs[:,i]) for i in range(d)]).T
-    return mets
-
-  def find_ref( col, true):
-    ref = true[:,0]
-    return ref
 
   def add_training_op(self, loss):
     """Sets up the training Ops.
