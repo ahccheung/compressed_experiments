@@ -1,34 +1,12 @@
-import os
-import getpass
-import sys
-import time
 import csv
 import operator
 import numpy as np
+from scipy import special
 import tensorflow as tf
 import model_metrics as met
 
-class Config(object):
-  """Holds model hyperparams and data information.
-  """
-  batch_size = 100
-  rank = 1
-  order = 3
-  max_epochs = 500
-  lr = 0.01
-  lda1 = 20
-  lda2 = 0.01
-
-  def __init__(self, f_lab, snr=None):
-    self.random_init = (snr == None)
-    if snr != None:
-      self.add_noise = (np.isfinite(snr))
-    else: self.add_noise = False
-    self.f_lab = f_lab
-    self.snr = snr
-
-class ShallowModel(object):
-  """Implements model for shallow decomposition
+class ReluModel(object):
+  """Implements model for shallow decomposition.
   """
 
   def load_data(self, f_lab):
@@ -65,28 +43,33 @@ class ShallowModel(object):
     """
 
     with open(self.config.f_lab + 'T', 'rb') as csvfile:
-      r = csv.reader(csvfile, delimiter=' ')
-      w = float(r.next()[0])
-      self.conv_true = w * np.array([row for row in r]).astype('float32').T
+      r = csv.reader(csvfile, delimiter=',')
+      self.weights_true = np.array(r.next()).astype('float32')
+      self.weights_true = self.weights_true.reshape((self.config.rank,1))
+      self.V_true = np.empty((self.input_size, self.config.rank, self.config.order))
+      for j in range(self.input_size):
+        for l in range(self.config.rank):
+          self.V_true[j,l,:] = r.next()
+      self.V_true = self.V_true.astype('float32')
 
     with open(self.config.f_lab + 'module_effects', 'rb') as csvfile:
-      r = csv.reader(csvfile,delimiter = ' ')
+      r = csv.reader(csvfile,delimiter = ',')
       self.mod_true = np.array(r.next()).astype('float32')
       self.mod_true = self.mod_true.reshape((1, self.output_size))
       self.bias_true = np.array(r.next()).astype('float32')
       self.bias_true = self.bias_true.reshape((1, self.output_size))
 
-    #self.pool_true = 10*np.ones(self.config.order)
     self.pool_true = np.zeros(self.config.order)
-    with open(self.config.f_lab + 'activations', 'rb') as csvfile:
-      r = csv.reader(csvfile, delimiter=' ')
-      self.act_true = np.array(r.next()).astype('float32')
-      self.k_true = np.array(r.next()).astype('float32')
+    self.offset_true = np.loadtxt(self.config.f_lab + 'offsets', delimiter=',', dtype = 'float32')
 
   def get_variances(self):
+    """Get variances of true weights.
+    Returns:
+      List of variances for V, mod, bias, act, pool, k.
+    """
 
     f = lambda x: np.mean(x)**2
-    weights = [self.conv_true, self.mod_true, self.bias_true, self.act_true,self.pool_true, self.k_true]
+    weights = [self.V_true, self.mod_true, self.bias_true, self.offset_true,self.pool_true, self.weights_true]
     mu_2 = [f(x) for x in weights]
     g = lambda x: np.sqrt(x/self.config.snr)
 
@@ -97,120 +80,55 @@ class ShallowModel(object):
     """
 
     if self.config.random_init:
-      self.conv_init = np.random.normal(0, 1, (self.input_size,self.config.order)).astype('float32')
+      self.V_init = np.random.normal(0, 1, (self.input_size,self.config.rank,self.config.order)).astype('float32')
       self.mod_init = np.random.poisson(1, (1, self.output_size)).astype('float32')
       self.bias_init = np.random.poisson(1, (1, self.output_size)).astype('float32')
-      self.act_init = np.random.poisson(1,(1, self.config.rank)).astype('float32')
-      self.pool_init = np.zeros((1, self.config.order)).astype('float32')
-      self.k_init = np.random.exponential(5, self.config.rank).astype('float32')
+      self.offset_init = np.random.poisson(1,(1, self.config.rank)).astype('float32')
+      self.pool_init = np.zeros((self.config.rank, self.config.order))
+      self.pool_init = (self.pool_init + np.random.normal(0,1, (1, self.config.order))).astype('float32')
+      self.weights_init =np.random.randn(self.config.rank, 1).astype('float32')
 
     elif not self.config.add_noise:
-      self.conv_init = self.conv_true
+      self.V_init = self.V_true
       self.mod_init = self.mod_true
       self.bias_init = self.bias_true
-      self.act_init = self.act_true
+      self.offset_init = self.offset_true
       self.pool_init = self.pool_true
-      self.k_init = self.k_true
-
+      self.weights_init = self.weights_true
     else:
       var = self.get_variances()
-      self.conv_init = (self.conv_true + np.random.normal(0, var[0],(self.input_size,self.config.order))).astype('float32')
+      self.V_init = (self.V_true + np.random.normal(0, var[0],(self.input_size,self.config.rank,self.config.order))).astype('float32')
       self.mod_init = (self.mod_true + abs(np.random.normal(0, var[1], (1, self.output_size)))).astype('float32')
       self.bias_init = (self.bias_true + abs(np.random.normal(0, var[2], (1, self.output_size)))).astype('float32')
-      self.act_init = (self.act_true + np.random.normal(0, var[3], (1, self.config.rank))).astype('float32')
+      self.offset_init = (self.offset_true + np.random.normal(0, var[3], (1, self.config.rank))).astype('float32')
       self.pool_init = (self.pool_true + np.random.normal(0, var[4], (1, self.config.order))).astype('float32')
-      self.k_init = abs(self.k_true + np.random.normal(0, var[5], (self.config.rank))).astype('float32')
+      self.weight_init = (self.weights_true + np.random.normal(0, var[5], (self.config.rank, 1))).astype('float32')
 
   def add_model(self, input_data):
     """Implements core of model that transforms input_data into predictions.
-    The core transformation for this model which transforms a batch of input
-    data into a batch of predictions.
 
     Args:
       input_data: A tensor of shape (batch_size, input_size).
-    Returns:
-      pred: A tensor of shape (batch_size, output_size)
-      W, pool_weights, activations, mod_effects, biases: weights of model
     """
     # Hidden
     with tf.name_scope('hidden'):
-      W = tf.abs(tf.Variable(
-        self.conv_init, name = 'Conv_weights'))
-      conv = tf.matmul(self.x, W)
+      self.V = tf.abs(tf.Variable(
+        self.V_init, name = 'Conv_weights'))
+      conv = tf.tensordot(self.x, self.V, 1)
 
-      pool_weights = tf.Variable(self.pool_init, dtype='float32',name = 'Pool_weights')
-      pooled = self.pool(conv, pool_weights)
+      self.pool_weights = tf.Variable(self.pool_init, dtype='float32',name = 'Pool_weights')
+      pooled = self.pool(conv, self.pool_weights)
 
-      activations = tf.Variable(self.act_init, name = 'Activations')
-      self.k = tf.Variable(self.k_init, name='Log_steepness')
-      sig = self.logistic(self.k, pooled - activations) * pooled
+      self.offset = tf.Variable(self.offset_init, name = 'Offset')
+      relu = tf.nn.relu(pooled - self.offset)
+      self.weights = tf.Variable(self.weights_init)
+      module = tf.matmul(relu, self.weights)
 
-      mod_effects = tf.abs(tf.Variable(
+      self.mod_effects = tf.abs(tf.Variable(
                self.mod_init, name = 'Module_activity'))
-      biases = tf.abs(tf.Variable(
+      self.biases = tf.abs(tf.Variable(
              self.bias_init, name = 'Biases'))
-      pred  = tf.matmul(sig, mod_effects) + biases
-      self.sig =sig
-    return pred, W, pool_weights, activations, mod_effects, biases
-
-  def logistic(self, k, x):
-    l = tf.reciprocal(1 + tf.exp(tf.multiply(-k, x)))
-    return l
-
-  def logistic_diff(self):
-    a_fit = met.prediction_fit(tf.multiply(self.k, self.act_true) ,tf.multiply(self.k, self.activations))
-    k_fit = met.prediction_fit(self.k_true,self.k)
-    return (a_fit+ k_fit )/2
-
-  def polynomial(self, sess, conv, pool_vec):
-    weights = np.array(sess.run(tf.multiply(conv, pool_vec)).T)
-    idx, vals = self.indices(weights, [],[])
-    idx = self.sort_indices(idx)
-    poly = self.to_tensor(idx, vals)
-    poly = tf.convert_to_tensor(poly, dtype='float32')
-    return poly
-
-  def sort_indices(self,inds):
-    return [sorted(ind) for ind in inds]
-
-  def indices(self,weights, inds, vals):
-    if weights.shape[0]==0:
-      return inds, vals
-    else:
-      w = weights[0]
-      winds = np.nonzero(w)[0]
-      if inds ==[]:
-        inds = [[i] for i in winds]
-        vals = [w[i] for i in winds]
-      else:
-        inds = [[ind + [i] for i in winds] for ind in inds]
-        inds = reduce(operator.add, inds)
-        vals = [[val *w[i] for i in winds] for val in vals]
-        vals = reduce(operator.add, vals)
-      return self.indices(weights[1:], inds, vals)
-
-  def to_tensor(self,inds, vals):
-    dims = tuple(np.repeat(self.input_size, self.config.order))
-    T = np.zeros(dims)
-    for i in range(len(inds)):
-      ind = tuple(inds[i])
-      T.itemset(ind, vals[i])
-    return T
-
-  def model_fit(self, sess):
-    pool_vec = tf.sigmoid(self.pool_weights)
-    ones = tf.constant(1., shape=[self.config.order])
-    true_poly = self.polynomial(sess, self.conv_true, ones)
-    model_poly = self.polynomial(sess, self.W, pool_vec)
-
-    poly_fit = met.prediction_fit(true_poly, model_poly)
-
-    fit1 = self.logistic_diff()
-
-    fit2 = (met.prediction_fit(self.mod_true, self.mod_effects) \
-           + met.prediction_fit(self.bias_true,self.biases)) /2
-
-    return sess.run(poly_fit), sess.run(fit1), sess.run(fit2)
+      self.pred  = tf.matmul(module, self.mod_effects) + self.biases
 
   def pool(self, conv, pool_weights):
     """Continuous version of product pooling.
@@ -218,37 +136,38 @@ class ShallowModel(object):
     Eg: If tf.sigmoid(weight) = 0, get x -> 1
         If tf.sigmoid(weight) = 0.5, get x -> 0.5 + 0.5x
         If tf.sigmoid(weight) = 1, get x -> x
-    Then transformed inputs are then product pooled."""
+    Then transformed inputs are then product pooled.
+
+    Args:
+      conv: tensor of length d, representing inner products of x with module
+      element weights.
+      pool_weights: weights for pooling
+
+    Returns:
+      Tensor of product pooled values."""
 
     pool_vec = tf.sigmoid(pool_weights)
     weighted = 1 - pool_vec + tf.multiply(conv, pool_vec)
-    return tf.expand_dims(tf.cumprod(weighted, axis = 1)[:,-1],1)
+    return tf.cumprod(weighted, axis = 2)[:,:,-1]
 
   def add_loss_op(self, pred):
     """Adds ops for loss to the computational graph.
-
     Args:
       pred: A tensor of shape (batch_size, output_size)
-    Returns:
-      loss: A 0-d tensor (scalar) output
     """
-    reg = self.config.lda1 *self.config.batch_size* tf.norm(self.W, ord = 1) \
-          + self.config.lda2 * tf.norm(tf.sigmoid(self.pool_weights), ord = 1)
+    reg = self.config.lda1 *self.config.batch_size* tf.norm(self.V, ord = 1) \
+          + self.config.lda2*self.config.batch_size* tf.norm(tf.sigmoid(self.pool_weights), ord=1)
 
-    return tf.reduce_mean(tf.norm(self.y - pred, axis=1)**2)
+    mean = tf.reduce_mean(tf.norm(self.y - pred, axis=1))
+    self.loss = reg + mean
 
   def run_epoch(self, sess, input_data, output_data):
-    """Runs an epoch of training. Trains the model for one-epoch.
-
+    """Runs an epoch of training.
     Args:
       sess: tf.Session() object
-      input_data: np.ndarray of shape (n_samples, n_features)
-      input_labels: np.ndarray of shape (n_samples, n_classes)
+      input_data: np.ndarray of shape (n_samples, input_size)
+      output_labels: np.ndarray of shape (n_samples, output_size)
     """
-    gva = tf.gradients(self.loss, self.activations)
-    gvm = tf.gradients(self.loss, self.mod_effects)
-    gvp = tf.gradients(self.loss, self.pool_weights)
-    gvw = tf.gradients(self.loss, self.W)
 
     batches = self.batches(input_data, output_data,self.config.batch_size)
     for (x, y) in batches:
@@ -256,31 +175,45 @@ class ShallowModel(object):
       _ = sess.run([self.train_op], feed_dict=feed)
 
   def batches(self, X,  Y, batch_size):
-    """"Separates data X,Y into batches of length batch_size.
+    """"Separates data X,Y into random batches of length batch_size.
+    Args:
+      X: ndarray of input training data of size (n_samples, input_size)
+      Y: ndarray of output training data of size (n_samples, output_size)
+      batch_size: integer giving the size of each batch
     """
     batches = []
     count = 0
-
-    while len(X[count:]) > 0:
-      increment = min(batch_size, len(X[count:]))
+    N = X.shape[0]
+    idx = np.arange(N)
+    np.random.shuffle(idx)
+    while len(idx[count:]) > 0:
+      increment = min(batch_size, len(idx[count:]))
       if np.any(Y):
-        Ybatch = Y[count:count + increment]
+        Ybatch = Y[idx[count:count + increment]]
       else:
         Ybatch = np.array([])
-      batch = (X[count:count + increment], Ybatch)
+      batch = (X[idx[count:count + increment]], Ybatch)
       count += increment
       batches.append(batch)
 
     return batches
 
-  def prune_weights(self, sess, W):
-    W = sess.run(W)
-    pruned = np.array([self.prune_col(col) for col in W.T]).T
-    return tf.convert_to_tensor(pruned, dtype='float32')
+  def prune_weights(self, V, pool_weights):
+    threshold = 7
+    pool_vec =special.expit(pool_weights)
+    pool_vec[pool_weights>threshold] = 1
+    pool_vec[pool_weights<-threshold] = 0
 
-  def prune_col( self,col):
+    V = np.multiply(V, pool_vec)
+    pruned = np.empty((self.input_size, self.config.rank, self.config.order))
+    for l in range(self.config.rank):
+      pruned[:,l,:] = np.array([self.prune_col(col) for col in V[:,l,:].T]).astype('float32').T
+
+    return pruned
+
+  def prune_col( self, col):
     col_max = max(abs(col))
-    prune = [30*abs(cell)< col_max and cell!= 0 for cell in col]
+    prune = [10*abs(cell)< col_max and cell!= 0 for cell in col]
     if not np.any(prune):
       return col
     else:
@@ -289,25 +222,29 @@ class ShallowModel(object):
       return self.prune_col(tmp)
 
   def fit(self, sess):
-    """Fit model on provided data.
+    """Fit model on provided data by performing stochastic gradient descent.
+    Evaluate model every 100 steps and return performance statistics
+    Args:
+      sess: tf.Session() object.
+    Returns:
+      data: list of performance statistics of length (max_epochs/100) + 1 (1 for
+      every 100 steps.)
     """
     data = []
     train_fd = self.create_feed_dict(self.x_train, self.y_train)
     test_fd =self.create_feed_dict(self.x_test, self.y_test)
 
     for i in range(self.config.max_epochs):
+
       if (i % 100 ==0):
         print 'Step %d:' %(i)
-        metrics  = met.model_metrics(sess)
-        data.append([i] + metrics)
-
+        self.pruned= self.prune_weights(sess.run(self.V), sess.run(self.pool_weights))
+        metrics  = met.model_met(sess, self)
+        data.append( [self.config.snr, self.config.lr]+ [i] + metrics)
       self.run_epoch(sess, self.x_train, self.y_train)
-    print sess.run(self.W)
-    pruned= self.prune_weights(sess, self.W)
-    print sess.run(pruned)
-    print self.conv_true
-    metrics = met.model_metrics(sess)
-    data.append([self.config.max_epochs] + metrics)
+
+    metrics = met.model_met(sess, self)
+    data.append([self.config.snr, self.config.lr, self.config.max_epochs] + metrics)
     return data
 
   def add_training_op(self, loss):
@@ -324,7 +261,6 @@ class ShallowModel(object):
 
   def __init__(self, config):
     """Initializes the model.
-
     Args:
       config: A model configuration object of type Config
     """
@@ -333,36 +269,7 @@ class ShallowModel(object):
     self.add_placeholders()
     self.true_model()
     self.initial_weights()
-    self.pred, self.W, self.pool_weights,self.activations, self.mod_effects, self.biases= self.add_model(self.x)
-    self.loss = self.add_loss_op(self.pred)
+    self.add_model(self.x)
+    self.add_loss_op(self.pred)
     self.train_op = self.add_training_op(self.loss)
     self.pred_fit = met.prediction_fit(self.y, self.pred)
-
-def write_data(snr_values, data, f_lab):
-  filename = f_lab + '_data2'
-
-  with open(filename, 'wb') as csvfile:
-    w = csv.writer(csvfile, delimiter=',')
-    w.writerow(
-     ['snr','step','train_loss','train_fit','test_loss','test_fit','model_fit'])
-    for i in range(len(snr_values)):
-      snr = snr_values[i]
-      for row in data[i]:
-        w.writerow([snr] + row)
-
-if __name__ == "__main__":
-  f_lab = 'poissrelu'
-  snr_values = [None]
-  data = []
-
-  for snr in snr_values:
-    config = Config(f_lab, snr)
-    with tf.Graph().as_default():
-      model = ShallowModel(config)
-      sess = tf.Session()
-      init = tf.global_variables_initializer()
-      sess.run(init)
-      snr_data = model.fit(sess)
-
-    data.append(snr_data)
-  write_data(snr_values, data, f_lab)

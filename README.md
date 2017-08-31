@@ -18,7 +18,7 @@ Arguments:
   7. file_label = prefix for output files.
 
 The existing data in the directory was generated using the command:
-`python generate_data.py 2000 12 20 3 3 1 20 poiss`.
+`python generate_data.py 2000 12 20 3 3 1 10 poiss`.
 
 ### Output Files
 
@@ -56,7 +56,7 @@ file_label + 'data'. This is a csv file that contains information on how the lea
   6. train_fit: 1 - |y - pred|/|y|
   7. test_loss: loss function for testing data
   8. test_fit: fit for testing data
-  9. model_fit:
+  9. model_fit: fit of predicted model
   10. redundancy_fit: how well model recovers functional redundancies.
 
 Relevant code:
@@ -64,4 +64,4 @@ Relevant code:
   2. model_relu.py: code for implementing the CNN.
   3. model_metrics.py: code for various metrics to evaluate the model.
 
-For detailed explanations of the metrics in the csv file and the implementation of the model, refer to the notes and the code files.
+For detailed explanations of the metrics in the csv file and the implementation of the model, please refer to the notes and the code files.
