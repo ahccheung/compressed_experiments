@@ -24,9 +24,9 @@ The existing data in the directory was generated using the command:
 
   1. Training and testing sets: file_label + 'trainx', file_label + 'trainy', file_label + 'testx', file_label + 'testy'
   2. Model files:
-    i. file_label + 'T' stores the weights and vectors that generate the random tensor.
-    ii. file_label + 'module_effects' stores the weights M and biases b.
-    ii. file_label + 'activations' stores the offsets of the sigmoid functions.
+    a. file_label + 'T' stores the weights and vectors that generate the random tensor.
+    b. file_label + 'module_effects' stores the module effect weights M and biases b.
+    c. file_label + 'offsets' stores the offsets of the ReLU functions.
 
 ### Algorithm
 
