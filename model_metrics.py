@@ -81,8 +81,6 @@ def model_met(sess,model):
   print 'Loss %f'  %(train_loss)
   print 'Prediction fit %f'  %(train_fit)
   print 'Model fit %f, %f, %f' %(redundancy, offset_fit, final_w_fit)
-  #print model.pruned
-  #print model.V_true
 
   return [train_loss, train_fit, test_loss, test_fit, mod_fit, redundancy]
 
