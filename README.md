@@ -1,6 +1,6 @@
 # Learning gene modules
 
-This project contains the code for simulating gene expression profiles and learning gene module networks from the generated data. A detailed explanation of gene module networks is found at https://github.com/ahccheung/gene_modules/blob/master/notes.pdf. Slides for a talk given about this project is found at 
+This project contains the code for simulating gene expression profiles and learning gene module networks from the generated data. An overview of gene module networks is found at https://github.com/ahccheung/gene_modules/blob/master/notes.pdf. Slides for a talk given about this project is found at https://github.com/ahccheung/gene_modules/blob/master/presentation.pdf
 
 ## Generating simulated data
 
