@@ -59,7 +59,7 @@ file_label + 'data'. This is a csv file that contains information on how the lea
   9. model_fit: fit of predicted model
   10. redundancy_fit: how well model recovers functional redundancies.
 
-Relevant code:
+Relevant code files:
   1. run_model.py: wrapper code to train and test the model.
   2. model_relu.py: code for implementing the CNN.
   3. model_metrics.py: code for various metrics to evaluate the model.
